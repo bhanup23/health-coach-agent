@@ -521,15 +521,35 @@ Formal automated evaluation using frameworks such as RAGAS is listed as a future
 
 ## 📸 Screenshots
 
-> **Note:** Screenshots will be added after the initial demo recording. Drop files into the `screenshots/` folder and update paths below.
+### Patient Onboarding
 
-| Screen | File | Description |
-|--------|------|-------------|
-| Onboarding | `screenshots/onboarding.png` | Patient onboarding text input interface |
-| Profile extraction | `screenshots/profile_parser.png` | Structured patient profile after Gemini extraction |
-| RAG chat | `screenshots/rag_chat.png` | Example coaching response with source transparency |
-| Source view | `screenshots/source_view.png` | Retrieved document chunks displayed in the UI |
+Shows the onboarding interface where patient notes are entered before profile extraction.
 
+![Patient Onboarding](screenshots/onboarding.png)
+
+---
+
+### Structured Profile Extraction
+
+Demonstrates the conversion of unstructured onboarding notes into a structured patient profile.
+
+![Profile Extraction](screenshots/profile_parser.png)
+
+---
+
+### RAG-Powered Health Coaching
+
+Example of a protocol-grounded response generated using document retrieval.
+
+![RAG Response](screenshots/rag_response.png)
+
+---
+
+### Protocol Question Response
+
+Demonstrates answering wellness questions using information retrieved from the protocol document.
+
+![Protocol Question](screenshots/protocol_question.png)
 ---
 
 ## 🎥 Demo Video
