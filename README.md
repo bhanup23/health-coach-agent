@@ -562,7 +562,7 @@ Demonstrates answering wellness questions using information retrieved from the p
 - [ ] Asking protocol-grounded questions and seeing source chunks
 - [ ] Demonstrating the refusal behavior on out-of-scope queries
 
-📺 **Demo Link:** _[To be added]_
+📺 **Demo Link:** _[https://drive.google.com/file/d/1NjB9lg1hJQOZTNP1e1KqYJOmEliN9Xna/view?usp=sharing]_
 
 ---
 
