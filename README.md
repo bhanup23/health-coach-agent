@@ -21,7 +21,7 @@
 
 | | Link |
 |--|------|
-| 🚀 **Streamlit App** | _[Add Streamlit Community Cloud link here]_ |
+| 🚀 **Streamlit App** | _[https://health-coach-agent-dg8of9gu4cyrpxqm8ethrs.streamlit.app/]_ |
 | 🎥 **Demo Video** | _[Add YouTube / Loom walkthrough link here]_ |
 
 ---
@@ -573,7 +573,7 @@ This project is developed as part of an internship assignment and is intended fo
 ```
 MIT License
 
-Copyright (c) 2025 [Your Name]
+Copyright (c) 2025 [Bhanu Pratap]
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
