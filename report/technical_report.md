@@ -1,10 +1,10 @@
 # Technical Report: Health Coach AI Agent
 
 **Project:** Health Coach AI Agent  
-**Author:** [Your Name]  
+**Author:** Bhanu Pratap  
 **Date:** June 2025  
-**Context:** AI Engineering Internship Assignment  
-**Repository:** [GitHub Link]
+**Context:** Stealth AI  Internship Assignment  
+**Repository:** [https://github.com/bhanup23/health-coach-agent](https://github.com/bhanup23/health-coach-agent)
 
 ---
 
@@ -20,6 +20,7 @@
 8. [Hallucination Prevention](#8-hallucination-prevention)
 9. [Tradeoffs](#9-tradeoffs)
 10. [Future Improvements](#10-future-improvements)
+11. [Challenges Encountered](#11-challenges-encountered)
 
 ---
 
@@ -97,11 +98,11 @@ The system is organised into five loosely coupled layers, each with a single res
 ┌─────────────────────────────────┐
 │         Presentation Layer      │  app.py — Streamlit UI, session state
 ├─────────────────────────────────┤
-│          Agent Layer            │  agents/health_agent.py — prompt assembly, Gemini call
+│          Agent Layer            │  agents/health_agent.py — prompt assembly, grounded response
 ├─────────────────────────────────┤
-│        Retrieval Layer          │  rag/retriever.py — FAISS search, chunk return
+│        Retrieval Layer          │  rag/retriever.py — FAISS search, HuggingFace embeddings
 ├─────────────────────────────────┤
-│        Extraction Layer         │  parser/profile_parser.py — Gemini structured output
+│        Extraction Layer         │  parser/profile_parser.py — Pydantic structured extraction
 ├─────────────────────────────────┤
 │     Configuration & Prompts     │  utils/config.py, prompts/system_prompt.py
 └─────────────────────────────────┘
@@ -115,13 +116,13 @@ Each layer communicates through explicit function calls and typed data structure
 Entry point and UI orchestrator. Responsible for rendering the onboarding interface, triggering profile extraction on first submission, maintaining the chat loop, passing user messages to the agent, and displaying responses alongside retrieved source chunks. All session state (`st.session_state`) is managed here.
 
 **`agents/health_agent.py` (Agent Layer)**  
-Receives the patient profile, current protocol day, conversation history, and the user's message. Calls the retriever to fetch relevant chunks, assembles the full prompt using the system prompt template, and invokes the Gemini API. Returns the response text to the presentation layer.
+Receives the patient profile, current protocol day, conversation history, and the user's message. Calls the retriever to fetch relevant protocol chunks, assembles the full context-grounded response using the system prompt template, and returns the response text to the presentation layer. The implementation prioritises deterministic, protocol-grounded behaviour using retrieved context directly.
 
 **`rag/retriever.py` (Retrieval Layer)**  
-On initialisation, loads `data/protocol.pdf`, splits it into chunks using LangChain's `RecursiveCharacterTextSplitter`, generates embeddings using the Gemini Embedding model, and builds a FAISS index. At query time, embeds the user's query and returns the top-K most similar chunks.
+On initialisation, loads `data/protocol.pdf`, splits it into chunks using LangChain's `RecursiveCharacterTextSplitter`, generates embeddings using the HuggingFace Sentence-Transformers model (`all-MiniLM-L6-v2`), and builds a FAISS index. At query time, embeds the user's query using the same model and returns the top-K most similar chunks.
 
 **`parser/profile_parser.py` (Extraction Layer)**  
-Accepts raw onboarding text. Sends it to the Gemini API with a structured output schema bound to a Pydantic model. Returns a validated `PatientProfile` object. Handles graceful fallback if extraction fails.
+Accepts raw onboarding text and converts it into a validated `PatientProfile` object using a lightweight local extraction pipeline combined with Pydantic validation. Handles graceful fallback for missing or ambiguous fields, ensuring downstream components always receive a typed, valid profile.
 
 **`prompts/system_prompt.py` (Prompt Templates)**  
 Defines the system prompt template. The prompt injects the patient profile, current protocol day, retrieved RAG context, and conversation history. It also contains the grounding and refusal instructions that govern agent behaviour.
@@ -134,19 +135,19 @@ Loads environment variables, exposes model names, chunk size, overlap, and top-K
 ```
 [1] User submits onboarding text
         ↓
-[2] profile_parser.py → Gemini API (structured output)
+[2] profile_parser.py → local extraction + Pydantic validation
         ↓
 [3] PatientProfile (Pydantic) stored in st.session_state
         ↓
 [4] User submits chat query
         ↓
-[5] retriever.py → FAISS → top-K chunks
+[5] retriever.py → HuggingFace embeddings → FAISS → top-K chunks
         ↓
-[6] health_agent.py assembles prompt:
+[6] health_agent.py assembles grounded response:
       system_prompt + patient_profile + protocol_day
       + conversation_history + retrieved_chunks + user_query
         ↓
-[7] Gemini 2.5 Flash → response text
+[7] Context-grounded response assembled and returned
         ↓
 [8] app.py renders response + source chunks in UI
         ↓
@@ -167,9 +168,9 @@ Patient onboarding notes arrive as unstructured natural language. The same infor
 
 A downstream coaching agent cannot reliably personalise responses without a structured, typed representation of this data.
 
-### 4.2 Approach: Gemini Structured Output with Pydantic
+### 4.2 Approach: Structured Profile Extraction with Pydantic
 
-The extraction pipeline uses Gemini's native structured output capability, which allows a Pydantic model to be provided as the response schema. Gemini guarantees that its output conforms to this schema, eliminating the need for string parsing, regex extraction, or JSON deserialization error handling.
+The system converts onboarding notes into a structured `PatientProfile` object using a local extraction pipeline combined with Pydantic validation. During development, Gemini structured output was explored as the extraction mechanism. However, practical constraints — including API authentication inconsistencies across environments and quota restrictions during testing — led to a migration toward a lightweight local extraction approach that runs without external API dependencies, ensuring reliable execution across all deployment environments.
 
 **Pydantic Schema:**
 
@@ -182,33 +183,24 @@ class PatientProfile(BaseModel):
     current_struggles: list[str]
 ```
 
-**Extraction prompt (simplified):**
-
-```
-You are a patient intake assistant. Extract the following structured 
-information from the patient onboarding notes provided.
-If a field cannot be determined, use a sensible default.
-
-Onboarding notes:
-{raw_text}
-```
+The schema enforces runtime type validation on all extracted fields. Pydantic raises explicit validation errors if a field is missing or of the wrong type, which are caught and resolved with sensible defaults rather than allowed to propagate silently.
 
 ### 4.3 Why This Approach
 
-Two alternatives were considered:
+Three options were considered across the development lifecycle:
 
-**Option A — Prompt the model to return JSON as a string, then parse.**  
-This approach is fragile. Models frequently wrap JSON in markdown code fences, add commentary, or produce subtly invalid JSON. Parsing failures require error handling that degrades gracefully but silently — meaning incorrect data can propagate to the agent.
+**Option A — Gemini structured output with Pydantic schema binding.**  
+Explored during initial development. Provides API-level schema guarantees and eliminates JSON parsing errors. Rejected for the final implementation due to API authentication inconsistencies and quota limitations that introduced unreliability in the extraction step.
 
-**Option B — Regex or rule-based extraction.**  
-Brittle against the variability of natural language. Would require extensive rule maintenance and still fail on novel phrasings.
+**Option B — Prompt the model to return JSON as a string, then parse.**  
+Fragile in practice. Models frequently wrap JSON in markdown code fences or add commentary, causing silent parse failures that could propagate incorrect profile data downstream.
 
-**Chosen — Gemini structured output with Pydantic schema binding.**  
-The API guarantees schema conformance. Pydantic provides runtime type validation and raises explicit errors if fields are of the wrong type. This gives the extraction pipeline the highest reliability for the widest range of input formats.
+**Option C — Lightweight local extraction with Pydantic validation (chosen).**  
+Runs entirely without external API dependencies. Pydantic enforces schema conformance at runtime. Fallback defaults are applied for missing fields. This approach prioritises reliability and deployment simplicity, which is the correct trade-off for a demo-stage system where extraction API availability cannot be guaranteed.
 
 ### 4.4 Fallback Behaviour
 
-If the Gemini API call fails (network error, quota exceeded), the extraction function catches the exception and returns a `PatientProfile` populated with default values, allowing the session to continue in a degraded but functional state. The UI surfaces a warning to the user.
+If extraction produces missing or invalid fields, the parser applies typed default values for each field and continues. The UI surfaces a summary of the extracted profile so the user can verify correctness before beginning the coaching session.
 
 ---
 
@@ -235,7 +227,7 @@ CHUNK_OVERLAP=200  # overlap between adjacent chunks
 The 200-character overlap ensures that information spanning a chunk boundary is not lost — both adjacent chunks contain the bridging content.
 
 **Stage 3 — Embedding Generation**  
-Each chunk is embedded using the Gemini Embedding model (`models/gemini-embedding-001`). Embeddings are dense vector representations that encode semantic meaning rather than lexical content — chunks about "sleep quality" and "rest and recovery" will have similar embeddings even if they share no common words.
+Each chunk is embedded using the Sentence-Transformers model `all-MiniLM-L6-v2` via HuggingFace Embeddings. The model generates dense 384-dimensional semantic vectors that encode meaning rather than lexical content — chunks about "sleep quality" and "rest and recovery" will have similar embeddings even if they share no common words. This model runs locally with no API dependency, eliminating quota constraints and network latency from the retrieval path. During development, the Gemini Embedding model (`models/gemini-embedding-001`) was also evaluated, but `all-MiniLM-L6-v2` was selected for its zero-cost local execution and strong semantic retrieval performance on short to medium text spans.
 
 **Stage 4 — FAISS Index Construction**  
 The embeddings are stored in a FAISS (Facebook AI Similarity Search) index, which enables efficient approximate nearest-neighbour search at query time. The index is built once and held in memory for the session.
@@ -260,7 +252,7 @@ A chunk size of 1000 characters was selected as a starting point based on the ty
 
 ### 6.1 Role
 
-The health coaching agent is the system's reasoning core. It receives all available context — the patient profile, the current protocol day, the conversation history, and the retrieved RAG chunks — and produces a response that is both personalised and grounded.
+The health coaching agent is the system's reasoning core. It receives all available context — the patient profile, the current protocol day, the conversation history, and the retrieved RAG chunks — and produces a response that is personalised, grounded, and assembled deterministically from the retrieved protocol content. The final implementation prioritises protocol-grounded behaviour over open-ended generative responses, ensuring that every answer can be traced back to a specific retrieved chunk from the wellness document.
 
 ### 6.2 Prompt Structure
 
@@ -340,7 +332,7 @@ Session state is cleared when the browser tab is refreshed or closed. This means
 
 ### 7.4 Context Window Growth
 
-As conversation history grows, the total token count of each agent prompt increases. For long sessions with many turns, this can approach Gemini's context window limit. A mitigation strategy (conversation summarisation memory) is noted in Future Improvements but not implemented in this version.
+As conversation history grows, the total size of the assembled context increases. For long sessions with many turns, this can affect retrieval relevance and response coherence as older turns accumulate. A mitigation strategy — conversation summarisation memory, where older turns are replaced with a rolling LLM-generated summary — is noted in Future Improvements but not implemented in this version.
 
 ---
 
@@ -393,21 +385,37 @@ The system does not prevent the agent from misinterpreting or misapplying retrie
 
 ---
 
-### 9.2 Gemini Structured Output vs. Prompt-Parsed JSON
+### 9.2 Local Extraction vs. API-Based Structured Output (Gemini)
 
-| Dimension | Structured Output | Prompt-Parsed JSON |
-|-----------|------------------|--------------------|
-| Schema enforcement | API-level guarantee | Prompt-level, best-effort |
-| Parsing errors | Impossible | Common (code fences, commentary) |
-| Type validation | Pydantic at runtime | Manual or fragile |
-| Flexibility | Bound to Gemini API | Model-agnostic |
-| Implementation effort | Low | Medium (error handling required) |
+| Dimension | Local Extraction + Pydantic | Gemini Structured Output |
+|-----------|----------------------------|--------------------------|
+| API dependency | None | Required |
+| Reliability in demo | High (no quota/auth issues) | Variable (quota, auth failures) |
+| Schema enforcement | Pydantic at runtime | API-level guarantee |
+| Parsing errors | N/A | Impossible (when available) |
+| Cost | Free | API call per extraction |
+| Deployment simplicity | High | Medium |
 
-**Decision:** Gemini structured output. The reliability gain in the extraction layer justifies the tighter API coupling. Incorrect patient profiles would silently degrade all downstream coaching responses.
+**Decision:** Local extraction with Pydantic validation. Gemini structured output was the initial design choice and remains the stronger long-term option for production use. It was de-prioritised in the final implementation due to API authentication inconsistencies and quota limitations encountered during development and deployment. The local approach gives equivalent schema enforcement via Pydantic with zero external dependency, which is the right trade-off for a reliable internship demo.
 
 ---
 
-### 9.3 Prompt-Based Refusal vs. Similarity Threshold Filtering
+### 9.3 HuggingFace Embeddings vs. Gemini Embedding Model
+
+| Dimension | all-MiniLM-L6-v2 (HuggingFace) | Gemini Embedding |
+|-----------|--------------------------------|-----------------|
+| Execution | Local (no API call) | Remote API call |
+| Cost | Free | Per-request pricing |
+| Latency | In-process, fast | Network round-trip |
+| Embedding quality | Strong for short–medium text | Strong, general-purpose |
+| API dependency | None | Google AI API required |
+| Quota risk | None | Rate limits apply |
+
+**Decision:** `all-MiniLM-L6-v2` via HuggingFace. The Gemini Embedding model was evaluated during development. Both models produce strong semantic representations for protocol document retrieval. The HuggingFace model was selected for its zero-cost local execution and absence of quota constraints — particularly important for a demo deployment that may experience bursty usage during evaluation.
+
+---
+
+### 9.4 Prompt-Based Refusal vs. Similarity Threshold Filtering
 
 | Dimension | Prompt-Based Refusal | Similarity Threshold |
 |-----------|---------------------|---------------------|
@@ -422,7 +430,7 @@ The system does not prevent the agent from misinterpreting or misapplying retrie
 
 ---
 
-### 9.4 Streamlit Session State vs. External Memory Store
+### 9.5 Streamlit Session State vs. External Memory Store
 
 | Dimension | Session State | Redis / Database |
 |-----------|--------------|-----------------|
@@ -443,7 +451,7 @@ The following improvements are prioritised by expected impact on system quality:
 ### 10.1 High Impact
 
 **Conversation Summarisation Memory**  
-As conversation history grows, the prompt approaches Gemini's context window limit. Replacing raw history with an LLM-generated rolling summary would cap token growth while preserving the relevant context for personalisation.
+As conversation history grows, the assembled context increases in size, potentially affecting retrieval coherence and response quality in long sessions. Replacing raw history with an LLM-generated rolling summary would cap context growth while preserving the relevant personalisation context.
 
 **LangSmith Tracing and Observability**  
 Integrating LangSmith would enable full trace visibility into every retrieval call, prompt assembly step, and generation. This is the most important operational improvement for moving beyond manual testing.
@@ -471,9 +479,32 @@ Allowing users to review and correct their extracted profile before beginning co
 
 ---
 
+## 11. Challenges Encountered
+
+Development of the Health Coach AI Agent involved several practical engineering challenges that are not visible in the final codebase but are worth documenting as part of an honest account of the project lifecycle.
+
+**Gemini API Authentication Inconsistencies**  
+During early development, Gemini API authentication behaved inconsistently across local and Streamlit Cloud environments. Credentials that worked locally failed in deployment due to differences in how environment variables are injected. This was resolved through explicit configuration management in `utils/config.py` and a migration of the embedding and extraction components to locally-executable alternatives that do not require live API access.
+
+**Model Quota and Rate-Limit Restrictions**  
+API quota limits on the free tier restricted the number of extraction and embedding calls available during iterative testing. This directly motivated the decision to use `all-MiniLM-L6-v2` for embeddings (zero quota cost, local execution) and the local extraction pipeline for profile parsing.
+
+**Accidental Virtual Environment Commit**  
+During early repository setup, the Python virtual environment (`venv/`) was committed to the repository, causing the repository size to balloon significantly. This was resolved through a `git filter-branch` cleanup, a corrected `.gitignore`, and a repository history rewrite.
+
+**Streamlit Deployment Dependency Conflicts**  
+The initial `requirements.txt` contained version combinations that produced dependency conflicts on Streamlit Community Cloud's build environment. Resolving this required iterative constraint relaxation and pinning specific package versions compatible with both local Python 3.12 and the cloud runtime.
+
+**Secret Scanning Protections**  
+An early commit included a hardcoded API key in a configuration file. GitHub's secret scanning flagged this and blocked the push. The key was rotated, removed from history using `git filter-branch`, and replaced with `.env`-based configuration managed by `python-dotenv`.
+
+These challenges contributed directly to several architectural decisions in the final implementation, including the migration to locally-executable components, the structured configuration module, and the improved `.gitignore` setup.
+
+---
+
 ## Summary
 
-The Health Coach AI Agent demonstrates a complete, working LLM application pipeline: from unstructured data intake through structured extraction, retrieval-augmented generation, and context-grounded response generation. The architectural decisions made throughout — FAISS over hosted databases, structured output over string parsing, prompt-based refusal over threshold filtering, session state over persistent storage — reflect a consistent engineering philosophy: prefer simplicity, interpretability, and reliability over premature complexity for an MVP-stage system.
+The Health Coach AI Agent demonstrates a complete, working AI application pipeline: from unstructured data intake through Pydantic-validated structured extraction, FAISS-backed retrieval-augmented generation with HuggingFace embeddings, and protocol-grounded response assembly. The architectural decisions made throughout — FAISS over hosted databases, local extraction over API-dependent structured output, HuggingFace embeddings over cloud embedding APIs, prompt-based refusal over threshold filtering, session state over persistent storage — reflect a consistent engineering philosophy: prefer reliability, interpretability, and deployment simplicity over premature complexity at the MVP stage.
 
 The most significant known limitation is the lack of cross-session memory persistence. The most significant known risk is the absence of automated RAG evaluation, which means retrieval quality is currently validated only through manual testing. Both are documented, prioritised, and planned as next-step improvements.
 
