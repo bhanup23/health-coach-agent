@@ -22,7 +22,7 @@
 | | Link |
 |--|------|
 | 🚀 **Streamlit App** | _[https://health-coach-agent-dg8of9gu4cyrpxqm8ethrs.streamlit.app/]_ |
-| 🎥 **Demo Video** | _[Add YouTube / Loom walkthrough link here]_ |
+| 🎥 **Demo Video** | _[https://drive.google.com/file/d/1NjB9lg1hJQOZTNP1e1KqYJOmEliN9Xna/view?usp=sharing]_ |
 
 ---
 
